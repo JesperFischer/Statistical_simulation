@@ -1,0 +1,260 @@
+---
+title: "simulate"
+output: html_document
+date: '2023-05-11'
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+pacman::p_load(brms, tidyverse, here, cmdstanr, loo, extraDistr, tidybayes, furrr,bayesplot, patchwork, progressr, R.utils, scales)
+
+```
+
+## R Markdown
+
+
+```{r}
+
+library(brms)
+library(gamlss)
+
+get_model_pred2 = function(data){
+
+trials = data$trials
+int = data$int
+beta_coolness = data$beta_coolness
+beta_cue = data$beta_cue
+beta_cue_coolness_int = data$beta_cue_coolness_int
+
+
+coolness <- rbeta(trials, 1, 1)
+
+#1 is high-tone
+cue <- rbinom(trials,1,0.5)
+
+
+
+error =  rnorm(trials, mean = 2, sd = 2)
+
+
+
+prob <-  inv_logit_scaled(int+
+  beta_coolness * coolness +
+  beta_cue * cue +  beta_cue_coolness_int * cue * coolness + 
+error)
+  
+y = rbinom(trials,1,prob)
+
+cue = as.factor(cue)
+cue = ifelse(cue == 1, "high-tone","low-tone")
+
+
+
+dataa <<- data.frame(y = y, coolness = coolness, cue = cue)
+
+model <- gamlss(y ~ coolness*cue,
+           family = BI(mu.link = "logit"),
+           data = dataa,
+           control = gamlss.control(n.cyc = 50, trace = F))
+
+
+model_without <- gamlss(y ~ coolness+cue,
+           family = BI(mu.link = "logit"),
+           data = dataa,
+           control = gamlss.control(n.cyc = 50, trace = F))
+
+
+l1 = logLik(model)
+l0 = logLik(model_without)
+#get the ratio (i.e. difference in log)
+lrt = round(2*(l1-l0),2)
+#get p-value from chisquared distribution
+df=2
+p1 = 1-pchisq(2*(l1[1]-l0[1]),df=df)
+#reporting the statistics.
+
+intval = summary(model)[4,]
+
+df = data.frame(t(intval))
+df$plrt = p1
+names(df) = c("beta","se","t","p","p_lrt")
+
+df$aicdif = AIC(model)-AIC(model_without)
+df$bicdif = BIC(model)-BIC(model_without)
+
+return(df)
+}
+
+
+
+parameters = expand.grid(trials = 1000,
+            int = 0.5,
+            beta_coolness = seq(-1,1,0.2),
+            beta_cue = seq(-1,1,0.2),
+            beta_cue_coolness_int = seq(-3,3,by = 0.2))
+
+
+parameters$id = 1:nrow(parameters)
+
+data_list <- split(parameters, parameters$id)
+
+plan(multisession, workers = 10)
+
+results = future_map_dfr(data_list,get_model_pred2, .options = furrr_options(seed = TRUE), .progress = TRUE)
+
+
+results %>% ggplot(aes(x = p, y = p_lrt))+
+  geom_point()+
+  theme_classic()+
+  geom_abline(slope = 1, intercept = 0)
+
+results %>% 
+  mutate(siginificant_p = ifelse(p<0.05,"signifcant int","Non-signifcant int"), siginificant_lrt = ifelse(p_lrt<0.05,"signifcant int","Non-signifcant int"))%>%
+  dplyr::select(aicdif,bicdif,siginificant_p,siginificant_lrt) %>% 
+  pivot_longer(cols = c(aicdif,bicdif)) %>% 
+  mutate(information_citerion = name) %>% 
+  ggplot(aes(x = value))+
+  geom_histogram(aes(fill = siginificant_p), position = position_dodge())+
+  theme_classic()+
+  facet_grid(information_citerion~siginificant_lrt, labeller = label_both)+
+  geom_vline(aes(xintercept = 0), linetype = "dashed")
+
+
+
+results %>% ggplot(aes(x = p, y = p_lrt))+
+  geom_point()+
+  theme_classic()+
+  geom_abline(slope = 1, intercept = 0)+
+  coord_cartesian(xlim = c(0,0.1),ylim = c(0,0.2))+
+  geom_hline(aes(yintercept = 0.05), linetype = "dashed")+
+  geom_vline(aes(xintercept = 0.05), linetype = "dashed")
+  
+
+
+
+```
+
+
+
+```{r}
+
+library(brms)
+library(gamlss)
+
+lognormalvsnormal = function(data){
+
+trials = data$trials
+int = data$int
+beta_coolness = data$beta_coolness
+beta_cue = data$beta_cue
+beta_cue_coolness_int = data$beta_cue_coolness_int
+
+
+coolness <- rbeta(trials, 1, 1)
+
+#1 is high-tone
+cue <- rbinom(trials,1,0.5)
+
+
+
+error =  rnorm(trials, mean = 0, sd = 1)
+
+
+
+y <-  exp(int+
+  beta_coolness * coolness +
+  beta_cue * cue +  beta_cue_coolness_int * cue * coolness + 
+error)
+
+
+cue = as.factor(cue)
+
+
+
+dataa <<- data.frame(y = y, coolness = coolness, cue = cue)
+
+model_gamma <- glmmTMB::glmmTMB(y ~ coolness*cue,
+           family = Gamma(link = "log"),
+           data = dataa)
+
+model_LOGNO <- gamlss::gamlss(y ~ coolness*cue,
+           family = LOGNO(),
+           control = gamlss.control(n.cyc = 50, trace = F),
+           data = dataa)
+
+model_NO <- lm(log(y) ~ coolness*cue,
+           data = dataa)
+
+
+
+
+
+intval_gamma = summary(model_gamma)
+intval_gamma = intval_gamma$coefficients$cond
+df = data.frame((intval_gamma))
+df$id = "gamma"
+df$RMSE = sqrt(mean(residuals(model_gamma)^2))
+names(df) = c("beta","se","z","p","model","RMSE")
+df$dif = c(df[1,1]-data$int,df[2,1]-data$beta_coolness,df[3,1]-data$beta_cue,df[4,1]-data$beta_cue_coolness_int)
+
+
+
+intval_LOGO = data.frame(summary(model_LOGNO)[1:4,])
+intval_LOGO$id = "LGONO"
+intval_LOGO$RMSE = sqrt(mean(residuals(model_LOGNO)^2))
+names(intval_LOGO) = c("beta","se","z","p","model","RMSE")
+intval_LOGO$dif = c(intval_LOGO[1,1]-data$int,intval_LOGO[2,1]-data$beta_coolness,intval_LOGO[3,1]-data$beta_cue,intval_LOGO[4,1]-data$beta_cue_coolness_int)
+
+
+intval_NO = summary(model_NO)
+intval_NO = intval_NO$coefficients
+df1 = data.frame((intval_NO))
+df1$id = "Log(normal)"
+df1$RMSE = sqrt(mean(residuals(model_NO)^2))
+names(df1) = c("beta","se","z","p","model","RMSE")
+df1$dif = c(df1[1,1]-data$int,df1[2,1]-data$beta_coolness,df1[3,1]-data$beta_cue,df1[4,1]-data$beta_cue_coolness_int)
+
+
+realdf = rbind(df,df1,intval_LOGO)
+
+return(realdf)
+}
+
+
+
+parameters = expand.grid(trials = 1000,
+            int = 0.5,
+            beta_coolness = seq(-1,1,0.2),
+            beta_cue = seq(-1,1,0.2),
+            beta_cue_coolness_int = seq(-3,3,by = 0.2))
+
+
+parameters$id = 1:nrow(parameters)
+
+data_list <- split(parameters, parameters$id)
+
+
+results = future_map_dfr(data_list,lognormalvsnormal, .options = furrr_options(seed = TRUE), .progress = TRUE)
+
+
+results %>% ggplot(aes(x = model, y = RMSE))+
+  geom_boxplot()+theme_classic()#+coord_cartesian(ylim = c(0.9,2))
+
+results %>% ggplot(aes(x = model, y = dif))+
+  geom_boxplot()+theme_classic()
+
+
+
+results %>% ggplot(aes(x = p, y = p_lrt))+
+  geom_point()+
+  theme_classic()+
+  geom_abline(slope = 1, intercept = 0)+
+  coord_cartesian(xlim = c(0,0.1),ylim = c(0,0.2))+
+  geom_hline(aes(yintercept = 0.05), linetype = "dashed")+
+  geom_vline(aes(xintercept = 0.05), linetype = "dashed")
+  
+
+```
+
+
