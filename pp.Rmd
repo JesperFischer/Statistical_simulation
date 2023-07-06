@@ -1,0 +1,1181 @@
+---
+title: "Statistical simulations and considerations"
+author: "jesper fischer ehmsen"
+date: "2023-06-28"
+runtime: shiny
+output:
+  slidy_presentation: default
+  ioslides_presentation:
+    incremental: true
+    widescreen: yes
+---
+
+```{r setup, include=FALSE,echo = FALSE}
+pacman::p_load(brms, tidyverse, here, cmdstanr, loo, extraDistr, tidybayes, furrr,bayesplot, patchwork, progressr, R.utils, scales, gamlss, ggridges,sjPlot,sjmisc,sjlabelled,stats,equatiomatic,flextable)
+library(shiny)
+library(ggplot2)
+library(shinythemes)
+library(shinyWidgets)
+library(here)
+library(tidyverse)
+```
+
+## Outline
+
+* Regression as distributions
+
+* Parameterization of parameters in distributions
+  * Assumptions of regression
+    * Indepence(multilevel modeling)
+    * Normality of errors (QQ-plot)
+    * Heteroscedasticity 
+
+* Hierarchical / multilevel models / mixed effects models.
+
+* Statistical significance of models with and without and of coefficients
+
+
+## Regression as distributions
+:::::::::::::: {.columns}
+::: {.column}
+
+$$
+y_i \sim \mathcal{N}{(\mu_i, \sigma)}
+$$
+\linebreak
+
+$$
+\mu_i = \beta_0+\beta_1*X_i
+$$
+\linebreak
+
+$$
+\beta_0 = 5
+$$
+\linebreak
+
+$$
+\beta_1 = 2
+$$
+
+```{r, message = FALSE}
+n_obs = 100
+x = rep(seq(0,10,1),n_obs)
+intercept = 5
+slope = 2
+error = rnorm(n_obs,0,5)
+y = intercept+slope*x+error
+m1 = lm(y~x)
+tab_model(m1, show.ci = F, show.se = T)
+sigma(m1)
+```
+
+
+:::
+::: {.column}
+
+```{r regression as distributions, fig.width = 10, fig.height = 10, warning = F, message = F, echo = F, results='hide'}
+x = rep(seq(0,10,1),n_obs)
+intercept = 5
+slope = 2
+error = rnorm(n_obs,0,5)
+
+y = intercept+slope*x+error
+
+
+dd = data.frame(xs = x, ys = y) %>% mutate(xs = as.factor(xs))
+
+dd1 = dd %>% mutate(xs = as.numeric(xs))
+
+plotridges = ggplot(dd, aes(x = ys, y = xs, group = xs))+
+  geom_density_ridges(jittered_points = TRUE, alpha = .8)+coord_flip()+
+  geom_segment(aes(x = 0, xend = 24, y = 0, yend = 12), col = "blue", size = 1.2)+theme_classic()+
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), axis.title.x = element_blank(), text = element_text(size = 20))+
+  scale_x_continuous("X", breaks = seq(0,40,by = 5))
+
+
+normalplot = ggplot(dd1, aes(x = xs-1, y = ys))+
+  geom_point()+
+  geom_smooth(method = "lm", se=TRUE)+
+  scale_x_continuous("X", breaks = scales::pretty_breaks(n = 10))+
+  scale_y_continuous("Y", breaks = scales::pretty_breaks(n = 10))+
+  theme_classic()+coord_cartesian(ylim = c(0,40))+theme(text = element_text(size = 20))
+
+
+normalplot/plotridges
+```
+
+:::
+::::::::::::::
+
+
+
+
+
+
+## heteroscedasity
+
+
+:::::::::::::: {.columns}
+::: {.column}
+
+```{r heteroscedasity, fig.width = 10, fig.height = 10, warning = F, message = F, echo = F, results='hide'}
+#heteroskedacity
+
+get_qqplot = function(m, col = F){
+  if(col == TRUE){
+  data.frame() %>% ggplot(aes(sample = scale(m$residuals), col = dataa$categorical))+stat_qq() + stat_qq_line()+theme_classic()+ theme(legend.position = "none", text = element_text(size = 20))
+  }else{
+  data.frame() %>% ggplot(aes(sample = scale(m$residuals)))+stat_qq() + stat_qq_line()+theme_classic()+theme(legend.position = "none", text = element_text(size = 20))
+  }
+}
+
+trials = 500
+
+x = runif(trials,0,20)
+
+slope = 2
+intercept = 5
+
+error = rnorm(trials,0,5)
+error1 = rnorm(trials,0,5*x)
+error2 = rnorm(trials,5,5)
+
+y = intercept+x*slope+error
+y1 = intercept+x*slope+error1
+dataa <<- data.frame(x =x, y = y, y1 = y1)
+
+dataa$categorical = ifelse(dataa$y1 < intercept+dataa$x*slope, T,F)
+
+dataa$y2 = ifelse(dataa$categorical == T, y, y1)
+
+dataa$y3 = intercept+x*slope+error2
+
+plot1 = dataa %>% ggplot(aes(x = x, y = y))+
+  geom_point()+
+  theme_classic()+
+  geom_smooth(method = "lm")+
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), axis.title.x = element_blank(), text = element_text(size = 20))+scale_y_continuous("Y", scales::pretty_breaks(n = 5))
+
+plot2 = dataa %>% ggplot(aes(x = x, y = y1))+
+  geom_point()+
+  theme_classic()+
+  geom_smooth(method = "lm")+
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), axis.title.x = element_blank(), text = element_text(size = 20))+scale_y_continuous("Y", scales::pretty_breaks(n = 5))
+
+plot3 = dataa %>% ggplot(aes(x = x, y = y1, col = categorical))+
+  geom_point()+
+  geom_smooth(method = "lm")+
+  theme_classic()+
+  theme(legend.position = "none", text = element_text(size = 20), axis.text.x = element_blank(), axis.ticks.x = element_blank(), axis.title.x = element_blank())+scale_y_continuous("Y", scales::pretty_breaks(n = 5))
+
+
+plot4 = dataa %>% ggplot(aes(x = x, y = y2, col = categorical))+
+  geom_point()+
+  geom_smooth(method = "lm")+
+  theme_classic()+
+  theme(legend.position = "none", text = element_text(size = 20))+scale_y_continuous("Y", scales::pretty_breaks(n = 5))
+
+plot5 = dataa %>% ggplot(aes(x = x, y = y3))+
+  geom_point()+
+  geom_smooth(method = "lm")+
+  theme_classic()+
+  theme(legend.position = "none", text = element_text(size = 20))+scale_y_continuous("Y", scales::pretty_breaks(n = 5))
+
+
+m1 = lm(y ~ x, data = dataa)
+m2 = lm(y1 ~ x, data = dataa)
+m3 = lm(y1 ~ x+categorical, data = dataa)
+m4 = lm(y2 ~ x+categorical, data = dataa)
+m5 = lm(y3 ~ x, data = dataa)
+
+
+```
+
+
+
+$$
+x = U(0,20)
+\\
+\beta_1 = 2
+\\
+\beta_0 = 5
+\\
+\epsilon = \mathcal{N}(0,5)
+\\
+y = \beta_0+\beta_1*x+\epsilon
+$$
+```{r}
+sigma(m1)
+tab_model(m1)
+```
+
+
+
+:::
+::: {.column}
+
+```{r plot1, fig.width = 10, fig.height = 10, warning = F, message = F, echo = F, results='hide'}
+#heteroskedacity
+(plot1+get_qqplot(m1, col = F))
+
+```
+
+
+:::
+::::::::::::::
+
+##
+:::::::::::::: {.columns}
+::: {.column}
+
+$$
+x = U(0,20)
+\\
+\beta_1 = 2
+\\
+\beta_0 = 5
+\\
+\epsilon = \mathcal{N}(5,5)
+\\
+y = \beta_0+\beta_1*x+\epsilon
+$$
+```{r}
+sigma(m5)
+tab_model(m5)
+```
+
+:::
+::: {.column}
+
+```{r, fig.width = 10, fig.height = 10, warning = F, message = F, echo = F, results='hide'}
+#heteroskedacity
+(plot5+get_qqplot(m5, col = F))
+
+```
+
+
+:::
+::::::::::::::
+
+
+
+
+
+##
+:::::::::::::: {.columns}
+::: {.column}
+
+$$
+x = U(0,20)
+\\
+\beta_1 = 2
+\\
+\beta_0 = 5
+\\
+\epsilon_1 = \mathcal{N}(0,5*x)
+\\
+y2 = \beta_0+\beta_1*x+\epsilon_1
+$$
+```{r}
+sigma(m2)
+tab_model(m2)
+```
+:::
+::: {.column}
+
+```{r, fig.width = 10, fig.height = 10, warning = F, message = F, echo = F, results='hide'}
+(plot2+get_qqplot(m2, col = F))
+```
+
+:::
+::::::::::::::
+
+##
+:::::::::::::: {.columns}
+::: {.column}
+$$
+x = U(0,20)
+\\
+\beta_1 = 2
+\\
+\beta_0 = 5
+\\
+\epsilon_1 = \mathcal{N}(0,5*x)
+\\
+y2 = \beta_0+\beta_1*x+\epsilon_1
+$$
+```{r}
+sigma(m3)
+tab_model(m3)
+```
+
+:::
+::: {.column}
+
+```{r, fig.width = 10, fig.height = 10, warning = F, message = F, echo = F, results='hide'}
+(plot3+get_qqplot(m3, col = T))
+```
+
+:::
+::::::::::::::
+
+
+##
+:::::::::::::: {.columns}
+::: {.column}
+$$
+Simulation
+\\
+x = U(0,20)
+\\
+\beta_1 = 2
+\\
+\beta_0 = 5
+\\
+\epsilon = \mathcal{N}(0,e^{2+0.15*x})
+\\
+y2 = \beta_0+\beta_1*x+\epsilon
+\\
+$$
+
+$$
+Modeling:
+\\
+y_i \sim \mathcal{N}{(\mu_i, \sigma_i)}
+\\
+\mu_i = \beta_0+\beta_1*X_i
+$$
+
+
+```{r, fig.width = 10, fig.height = 10, warning = F, message = F, echo = F, results='hide'}
+
+trials = 500
+
+x = runif(trials,0,20)
+
+slope = 2
+intercept = 5
+
+error = rnorm(trials,0,5)
+error1 = rnorm(trials,0,exp(2+0.15*x))
+error2 = rnorm(trials,5,5)
+
+y = intercept+x*slope+error
+y1 = intercept+x*slope+error1
+dataa = data.frame(x =x, y = y, y1 = y1)
+
+lm = lm(y1~1+x)
+
+mm = gamlss(y1~1+x,
+       sigma.formula = ~1+x,
+       data = dataa)
+summary(mm)
+
+tab_model(mm)
+
+gamlss_model = ggeffects::ggpredict(mm)$x
+linear_model = ggeffects::ggpredict(lm)$x
+
+
+gamlss_model_plot = dataa %>% ggplot(aes(x = x, y = y1))+
+  geom_point()+
+  theme_classic()+
+  geom_lineribbon(data = gamlss_model, aes(y = predicted, x = x, ymin = conf.low, ymax = conf.high), alpha = 0.4)+
+  ggtitle("Gamlss")+
+  theme(legend.position = "none", text = element_text(size = 20))+scale_y_continuous("Y", scales::pretty_breaks(n = 5))
+
+linear_model_plot = dataa %>% ggplot(aes(x = x, y = y1))+
+  geom_point()+
+  theme_classic()+
+  geom_lineribbon(data = linear_model, aes(y = predicted, x = x, ymin = conf.low, ymax = conf.high), alpha = 0.4)+
+  ggtitle("Linear model")+
+  theme(legend.position = "none", text = element_text(size = 20))+scale_y_continuous("Y", scales::pretty_breaks(n = 5))
+```
+
+```{r}
+tab_model(lm)
+```
+
+:::
+::: {.column}
+
+```{r, fig.width = 10, fig.height = 10, warning = F, message = F, echo = F, results='hide'}
+linear_model_plot
+par(mfrow = c(2, 2))
+plot(lm)
+```
+
+
+
+:::
+::::::::::::::
+
+
+
+##
+:::::::::::::: {.columns}
+::: {.column}
+$$
+Simulation
+\\
+x = U(0,20)
+\\
+\beta_1 = 2
+\\
+\beta_0 = 5
+\\
+\epsilon = \mathcal{N}(0,e^{2+0.15*x})
+\\
+y2 = \beta_0+\beta_1*x+\epsilon
+\\
+$$
+
+$$
+Modeling:
+\\
+y_i \sim \mathcal{N}{(\mu_i, \sigma_i)}
+\\
+\mu_i = \beta_0+\beta_1*X_i
+\\
+\sigma_i = \beta_0+\beta_1*X_i
+$$
+```{r}
+tab_model(mm)
+```
+
+
+:::
+::: {.column}
+
+```{r, fig.width = 10, fig.height = 10, warning = F, message = F, echo = F, results='hide'}
+gamlss_model_plot
+
+plot(mm)
+```
+
+:::
+::::::::::::::
+
+## Distributions
+
+```{r, warning = F, message = F, echo = F, results='hide'}
+slider_params1 <- list(
+  list("mu", "mu", -100, 100, 0, 1),
+  list("sd", "sd", 0, 100, 1, 1)
+)
+
+slider_params2 <- list(
+  list("mu_beta", "mu_beta", 0, 1, 0.5, 0.01),
+  list("kappa", "kappa", 0, 1000, 50, 1)
+)
+
+slider_params3 <- list(
+  list("theta", "theta", 0, 1, 0.5, 0.01)
+)
+slider_params4 <- list(
+  list("mean", "mean", -10, 10, 1, 0.1),
+  list("std", "std", 0, 10, 1, 0.1)
+  
+)
+
+slider_params5 <- list(
+  list("mean_lognormal", "mean_lognormal", -10, 10, 1, 0.1),
+  list("sd_lognormal", "sd_lognormal", 0, 10, 1, 0.1)
+)
+
+slider_params6 <- list(
+  list("mean_gamma", "mean_gamma", 0, 100, 1, 1),
+  list("sd_gamma", "sd_gamma", 0, 10, 1, 0.1)
+)
+
+
+slider_params7 <- list(
+  list("mean_beta", "mean_beta", 0, 1, 0.5, 0.05),
+  list("kappa_beta", "kappa_beta", 0, 1, 0.5, 0.05),
+  list("nu_beta", "nu_beta", 0, 1, 0.5, 0.05),
+  list("tau_beta", "tau_beta", 0, 1, 0.5, 0.05)
+)
+
+
+slider_params8 <- list(
+  list("shifted_mean", "shifted_mean", -10, 10, 0, 0.1),
+  list("shifted_std", "shifted_std", 0, 10, 1, 0.1),
+  list("shift", "shift", 0, 1000, 0, 1))
+
+
+
+ui <- fluidPage(
+  tabsetPanel(
+    tabPanel("Page 1",
+      sidebarLayout(
+        sidebarPanel(
+          lapply(slider_params1, function(p) {
+            do.call(sliderInput, p)
+          })
+        ),
+        mainPanel(
+        fluidRow(
+        column(12, plotOutput("plot", height = "750px"))
+      )
+    ))),
+    tabPanel("Page 2",
+      sidebarLayout(
+        sidebarPanel(
+          lapply(slider_params2, function(p) {
+            do.call(sliderInput, p)
+          })
+        ),
+        mainPanel(
+        fluidRow(
+        column(12, plotOutput("plot2", height = "750px"))
+      )
+    ))),
+        tabPanel("Page 3",
+      sidebarLayout(
+        sidebarPanel(
+          lapply(slider_params3, function(p) {
+            do.call(sliderInput, p)
+          })
+        ),
+        mainPanel(
+        fluidRow(
+        column(12, plotOutput("plot3", height = "750px"))
+      )
+    ))),
+        tabPanel("Page 4",
+      sidebarLayout(
+        sidebarPanel(
+          lapply(slider_params4, function(p) {
+            do.call(sliderInput, p)
+          })
+        ),
+        mainPanel(
+        fluidRow(
+        column(12, plotOutput("plot4", height = "750px"))
+      )
+    ))),
+        tabPanel("Page 5",
+      sidebarLayout(
+        sidebarPanel(
+          lapply(slider_params5, function(p) {
+            do.call(sliderInput, p)
+          })
+        ),
+        mainPanel(
+        fluidRow(
+        column(12, plotOutput("plot5", height = "750px"))
+      )
+    ))),
+        tabPanel("Page 6",
+      sidebarLayout(
+        sidebarPanel(
+          lapply(slider_params6, function(p) {
+            do.call(sliderInput, p)
+          })
+        ),
+        mainPanel(
+        fluidRow(
+        column(12, plotOutput("plot6", height = "750px"))
+      )
+    ))),
+        tabPanel("Page 7",
+      sidebarLayout(
+        sidebarPanel(
+          lapply(slider_params7, function(p) {
+            do.call(sliderInput, p)
+          })
+        ),
+        mainPanel(
+        fluidRow(
+        column(12, plotOutput("plot7", height = "750px"))
+      )
+    ))),
+        tabPanel("Page 8",
+      sidebarLayout(
+        sidebarPanel(
+          lapply(slider_params8, function(p) {
+            do.call(sliderInput, p)
+          })
+        ),
+        mainPanel(
+        fluidRow(
+        column(12, plotOutput("plot8", height = "750px"))
+      )
+    )))
+  )
+)
+
+
+
+server <- function(input, output) {
+ normal_data = reactive({
+    data3 = data.frame(x = rnorm(1000,input$mu,input$sd))
+    
+    return(data3)   
+ })
+ beta_data = reactive({
+    data3 = data.frame(x = extraDistr::rprop(1000,input$kappa,input$mu_beta))
+    
+    return(data3)   
+ })
+  binominal_data = reactive({
+    data3 = data.frame(x = rbinom(1000,1,input$theta))
+    return(data3)   
+ })
+  lognormal_data = reactive({
+    data3 = data.frame(x = exp(rnorm(1000,input$mean,input$std)))
+    return(data3)   
+ })
+ 
+  lnorm_data = reactive({
+    data3 = data.frame(x = rlnorm(1000,input$mean_lognormal,input$sd_lognormal))
+    return(data3)   
+ })
+  
+  gamma_data = reactive({
+    data3 = data.frame(x = EnvStats::rgammaAlt(1000,mean = input$mean_gamma,cv = input$sd_gamma))
+    return(data3)   
+ })
+  zoib_data = reactive({
+    data3 = data.frame(x =   gamlss.dist::rBEINF(1000,mu = input$mean_beta,sigma = input$kappa_beta, nu = input$nu_beta, tau = input$tau_beta))
+    return(data3)   
+ })
+   shifted_data = reactive({
+    data3 = data.frame(x = brms::rshifted_lnorm(1000,input$shifted_mean,input$shifted_std,input$shift))
+    return(data3)   
+ })
+  
+
+ output$plot <- renderPlot({
+
+     normal_data() %>% ggplot(aes(x = x)) +geom_histogram()+theme_classic()+coord_cartesian(xlim = c(input$mu-5*input$sd,input$mu+5*input$sd))+
+       theme(legend.position = "none", text = element_text(size = 20))+ggtitle("Normal distribution")
+   
+ })
+ 
+ output$plot2 <- renderPlot({
+
+     beta_data() %>% ggplot(aes(x = x)) +geom_histogram()+theme_classic()+coord_cartesian(xlim = c(0,1))+
+       theme(legend.position = "none", text = element_text(size = 20))+ggtitle("Beta distribution")
+   
+ })
+ 
+ 
+ output$plot3 <- renderPlot({
+
+     binominal_data() %>% ggplot(aes(x = x))+geom_histogram()+theme_classic()+coord_cartesian(xlim = c(-0.2,1.2))+
+       theme(legend.position = "none", text = element_text(size = 20))+ggtitle("binominal distribution")
+   
+ })
+ 
+ 
+  output$plot4 <- renderPlot({
+
+     lognormal_data() %>% ggplot(aes(x = x))+geom_histogram()+theme_classic()+
+       theme(legend.position = "none", text = element_text(size = 20))+ggtitle("exp(Normal distribution)")
+   
+ })
+ 
+  
+  
+  output$plot5 <- renderPlot({
+
+     lnorm_data() %>% ggplot(aes(x = x))+geom_histogram()+theme_classic()+
+       theme(legend.position = "none", text = element_text(size = 20))+ggtitle("lognormal distribution")
+   
+ })
+  
+    output$plot6 <- renderPlot({
+
+     gamma_data() %>% ggplot(aes(x = x))+geom_histogram()+theme_classic()+
+       theme(legend.position = "none", text = element_text(size = 20))+ggtitle("Gamma distribution")
+   
+ })
+
+   output$plot7 <- renderPlot({
+      zoib_data() %>% ggplot(aes(x = x))+geom_histogram()+theme_classic()+
+       theme(legend.position = "none", text = element_text(size = 20))+ggtitle("ZIOB distribution")
+   
+ }) 
+   
+   output$plot8 <- renderPlot({
+      shifted_data() %>% ggplot(aes(x = x))+geom_histogram()+theme_classic()+
+       theme(legend.position = "none", text = element_text(size = 20))+ggtitle("Shifted lognormal distribution")
+   
+ }) 
+
+}
+```
+
+```{r, echo = FALSE, message=F, warning=FALSE}
+shinyApp(ui = ui, server = server,options = list(width = "100%", height = 800))
+```
+
+
+
+
+
+
+
+
+
+
+## normal vs lognormal vs gamma
+:::::::::::::: {.columns}
+::: {.column}
+$$
+Simulations:
+\\
+y = exp(intercept+\beta_{coolness} * coolness +\beta_{cue} * cue +  \beta_{int} * cue * coolness +  \epsilon)
+\\
+coolness \sim Beta(1, 1)
+\\
+cue \sim B(1,0.5)
+\\
+\epsilon \sim\mathcal{N} (0, 1)
+$$
+:::
+::: {.column}
+
+$$
+Models:
+\\
+y_i \sim Gamma(\mu_i, \sigma)
+\\
+y_i \sim Lognormal(\mu_i, \sigma)
+\\
+y_i \sim log(\mathcal{N}(\mu_i, \sigma))
+\\
+\mu_i = intercept+\beta_{coolness} * coolness +\beta_{cue} * cue +  \beta_{int} * cue * coolness
+$$
+
+:::
+::::::::::::::
+
+
+
+## Root mean squared error (RMSE)
+```{r, fig.width = 16, fig.height = 10, warning = F, message = F, echo = F, results='hide'}
+load(here::here("simulation_workspace.RData"))
+
+p1 = results_pos %>% ggplot(aes(x = model, y = RMSE))+
+  geom_boxplot()+theme_classic()+theme(text = element_text(size = 20))
+
+p2 = results_pos %>% ggplot(aes(x = model, y = RMSE))+
+  geom_boxplot()+theme_classic()+coord_cartesian(ylim = c(-0.1,10))+theme(text = element_text(size = 20))
+
+p1+p2
+```
+
+
+
+## normal vs lognormal vs gamma
+
+```{r, fig.width = 16, fig.height = 10, warning = F, message = F, echo = F, results='hide'}
+results_pos %>% mutate(coefs = gsub("[0-9.]", "",rownames(.))) %>% ggplot(aes(x = coefs, y = dif))+
+  geom_boxplot()+
+  theme_classic()+facet_wrap(~model)+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),text = element_text(size = 20))+
+  ylab("difference between simulated and recovered coefficients")
+```
+
+
+
+
+
+## normal vs beta
+:::::::::::::: {.columns}
+::: {.column}
+$$
+Simulations:
+\\
+y = S^{-1}(intercept+\beta_{coolness} * coolness +\beta_{cue} * cue +  \beta_{int} * cue * coolness +  \epsilon)
+\\
+coolness \sim Beta(1, 1)
+\\
+cue \sim B(1,0.5)
+\\
+\epsilon \sim\mathcal{N} (0, 1)
+\\
+S^{-1}(x) = \frac{exp(x)}{1+exp(x)}
+$$
+:::
+::: {.column}
+
+$$
+Models:
+\\
+y_i \sim Beta(S^{-1}(\mu_i), \kappa)
+\\
+y_i \sim S^{-1}(\mathcal{N}(\mu_i, \sigma))
+\\
+\mu_i = intercept+\beta_{coolness} * coolness +\beta_{cue} * cue +  \beta_{int} * cue * coolness
+$$
+
+:::
+::::::::::::::
+
+
+
+## Root mean squared error (RMSE)
+```{r, fig.width = 16, fig.height = 10, warning = F, message = F, echo = F, results='hide'}
+load(here::here("simulation_workspace.RData"))
+
+p1 = results_beta %>% ggplot(aes(x = model, y = RMSE))+
+  geom_boxplot()+theme_classic()+theme(text = element_text(size = 20))
+
+p1
+
+
+```
+
+
+
+## normal vs beta
+
+```{r, fig.width = 16, fig.height = 10, warning = F, message = F, echo = F, results='hide'}
+results_beta %>% mutate(coefs = gsub("[0-9.]", "",rownames(.))) %>% ggplot(aes(x = coefs, y = dif))+
+  geom_boxplot()+
+  theme_classic()+facet_wrap(~model)+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),text = element_text(size = 20))+
+  ylab("difference between simulated and recovered coefficients")
+```
+
+
+
+  
+
+
+
+
+## normal vs beta (2)
+:::::::::::::: {.columns}
+::: {.column}
+$$
+Simulations:
+\\
+y = Beta(\mu_i, \kappa)
+\\
+\mu_i = S^{-1}(intercept+\beta_{coolness} * coolness +\beta_{cue} * cue +  \beta_{int} * cue * coolness
+\\
+coolness \sim Beta(1, 1)
+\\
+cue \sim B(1,0.5)
+\\
+\epsilon \sim (\mathcal{N} (7, 0.5))^2
+\\
+S^{-1}(x) = \frac{exp(x)}{1+exp(x)}
+$$
+:::
+::: {.column}
+
+$$
+Models:
+\\
+y_i \sim Beta(S^{-1}(\mu_i), \kappa)
+\\
+y_i \sim S^{-1}(\mathcal{N}(\mu_i, \sigma))
+\\
+\mu_i = intercept+\beta_{coolness} * coolness +\beta_{cue} * cue +  \beta_{int} * cue * coolness
+$$
+
+:::
+::::::::::::::
+
+
+
+## Root mean squared error (RMSE) (2)
+```{r, fig.width = 16, fig.height = 10, warning = F, message = F, echo = F, results='hide'}
+load(here::here("simulation_workspace.RData"))
+
+results_beta2 %>% ggplot(aes(x = model, y = RMSE))+
+  geom_boxplot()+theme_classic()+theme(text = element_text(size = 20))
+
+```
+
+
+
+## normal vs beta (2)
+
+```{r, fig.width = 16, fig.height = 10, warning = F, message = F, echo = F, results='hide'}
+results_beta2 %>% mutate(coefs = gsub("[0-9.]", "",rownames(.))) %>% ggplot(aes(x = coefs, y = dif))+
+  geom_boxplot()+
+  theme_classic()+facet_wrap(~model)+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),text = element_text(size = 20))+
+  ylab("difference between simulated and recovered coefficients")
+```
+
+
+
+## model comparison
+:::::::::::::: {.columns}
+::: {.column}
+$$
+Simulations:
+\\
+y = S^{-1}(intercept+\beta_{coolness} * coolness +\beta_{cue} * cue +  \beta_{int} * cue * coolness +  \epsilon)
+\\
+coolness \sim Beta(1, 1)
+\\
+cue \sim B(1,0.5)
+\\
+\epsilon \sim\mathcal{N} (2, 2)
+\\
+S^{-1}(x) = \frac{exp(x)}{1+exp(x)}
+$$
+:::
+::: {.column}
+
+$$
+Models:
+\\
+y_i \sim Beta(S^{-1}(\mu1_i), \kappa)
+\\
+y_i \sim Beta(S^{-1}(\mu2_i), \kappa)
+\\
+\mu1_i = intercept+\beta_{coolness} * coolness +\beta_{cue} * cue +  \beta_{int} * cue * coolness
+\\
+\mu2_i = intercept+\beta_{coolness} * coolness +\beta_{cue} * cue
+$$
+:::
+::::::::::::::
+
+
+## Loglikelihood ratio test vs significant beta-coeficients
+
+```{r, fig.width = 16, fig.height = 10, warning = F, message = F, echo = F, results='hide'}
+results_lrt %>% ggplot(aes(x = p, y = p_lrt))+
+  geom_point()+
+  theme_classic()+
+  geom_abline(slope = 1, intercept = 0)+ylab("P-value from LRT")+xlab("P-value from coeficient")+theme(text = element_text(size = 20))
+
+results_lrt %>% ggplot(aes(x = p, y = p_lrt))+
+  geom_point()+
+  theme_classic()+
+  geom_abline(slope = 1, intercept = 0)+
+  coord_cartesian(xlim = c(0,0.1),ylim = c(0,0.2))+
+  geom_hline(aes(yintercept = 0.05), linetype = "dashed")+
+  geom_vline(aes(xintercept = 0.05), linetype = "dashed")+ylab("P-value from LRT")+xlab("P-value from coeficient")+theme(text = element_text(size = 20))
+  
+
+```
+
+<!-- ## Information citerion -->
+<!-- ```{r, fig.width = 16, fig.height = 10, warning = F, message = F, echo = F, results='hide'} -->
+<!-- results_lrt %>%  -->
+<!--   mutate(siginificant_coef = ifelse(p<0.05,"signifcant int","Non-signifcant int"), siginificant_lrt = ifelse(p_lrt<0.05,"signifcant int","Non-signifcant int"))%>% -->
+<!--   dplyr::select(aicdif,bicdif,siginificant_coef,siginificant_lrt) %>% -->
+<!--   pivot_longer(cols = c(aicdif,bicdif)) %>%  -->
+<!--   mutate(information_citerion = name) %>%  -->
+<!--   ggplot(aes(x = value))+ -->
+<!--   geom_histogram(aes(fill = information_citerion), position = position_dodge())+ -->
+<!--   theme_classic()+ -->
+<!--   facet_grid(siginificant_coef~siginificant_lrt, labeller = label_both)+ -->
+<!--   geom_vline(aes(xintercept = 0), linetype = "dashed")+theme(text = element_text(size = 20))+xlab("Difference between information citerion") -->
+
+<!-- ``` -->
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+## Mixed effects modeling
+### complete pooling
+
+:::::::::::::: {.columns}
+::: {.column}
+$$
+Models:
+\\
+y_i \sim Beta(S^{-1}(\mu_i), \kappa)
+\\
+\mu_i = intercept+\beta_{Tcold} * T_{cold_i}
+$$
+
+:::
+::: {.column}
+
+```{r, fig.width = 10, fig.height = 10, warning = F, message = F, echo = F, results='hide'}
+load("simulation_workspace2.RData")
+
+colors = c("#24DBC1","#6524DB","#DB243E","#9ADB24")
+df %>% ggplot(aes(x = targetTcold, y = vasResponse))+
+  geom_point()+
+  facet_wrap(~SubID)+
+  theme_classic()+
+  geom_line(data = curves2, aes(x = x, y = y, col = "complete_pooling"), size = 1.2)+
+  coord_cartesian(ylim = c(0,1))+theme(text = element_text(size = 20))+scale_color_manual(values = c(colors[1]))
+```
+:::
+::::::::::::::
+
+
+## Mixed effects modeling
+### No pooling
+
+:::::::::::::: {.columns}
+::: {.column}
+$$
+Models:
+\\
+for(1:subs)
+\{
+\\
+y_{i,s} \sim Beta(S^{-1}(\mu_{i,s}), \kappa_s)
+\\
+\mu_{i,s} = intercept_s+\beta_{Tcold,s} * T_{cold_{i,s}}
+\\
+\}
+$$
+
+
+:::
+::: {.column}
+
+```{r, fig.width = 10, fig.height = 10, warning = F, message = F, echo = F, results='hide'}
+df %>% ggplot(aes(x = targetTcold, y = vasResponse))+
+  geom_point()+
+  facet_wrap(~SubID)+
+  theme_classic()+
+  geom_line(data = curves, aes(x = x, y = y, col = "no_pooling"), size = 1.2)+
+  geom_line(data = curves2, aes(x = x, y = y, col = "complete_pooling"), size = 1.2)+
+  coord_cartesian(ylim = c(0,1))+theme(text = element_text(size = 20))+scale_color_manual(values = c(colors[1],colors[2]))
+```
+:::
+::::::::::::::
+
+## Mixed effects modeling
+### No pooling
+
+:::::::::::::: {.columns}
+::: {.column}
+
+$$
+Models:
+\\
+y_{i,s} \sim Beta(S^{-1}(\mu_{i,s}), \kappa_s)
+\\
+\mu_{i,s} = intercept_s+\beta_{Tcold} * T_{cold_{i,s}}
+\\
+intercept_s = \underbrace{\gamma_0}_{\text{Group level Intercept}}+\underbrace{u_{0,s}}_{\text{Subject difference from group level}}
+\\
+\\
+\\
+$$
+
+:::
+::: {.column}
+
+```{r, fig.width = 10, fig.height = 10, warning = F, message = F, echo = F, results='hide'}
+load("simulation_workspace2.RData")
+
+df %>% ggplot(aes(x = targetTcold, y = vasResponse))+
+  geom_point()+
+  facet_wrap(~SubID)+
+  theme_classic()+
+  geom_line(data = curves, aes(x = x, y = y, col = "no_pooling"), size = 1.2)+
+  geom_line(data = curves2, aes(x = x, y = y, col = "complete_pooling"), size = 1.2)+
+  geom_line(data = curves4, aes(x = x, y = y, col = "(1 | id), random intercept"), size = 1.2)+
+  coord_cartesian(ylim = c(0,1))+theme(text = element_text(size = 20))+scale_color_manual(values = c(colors[3],colors[1],colors[2]))
+```
+:::
+::::::::::::::
+
+
+
+
+## Mixed effects modeling
+### Partial pooling 2.
+
+:::::::::::::: {.columns}
+::: {.column}
+$$
+Models:
+\\
+y_{i,s} \sim Beta(S^{-1}(\mu_{i,s}), \kappa_s)
+\\
+\mu_{i,s} = intercept_s+\beta_{Tcold,s} * T_{cold_{i,s}}
+\\
+intercept_s = \underbrace{\gamma_0}_{\text{Group level Intercept}}+\underbrace{u_{0,s}}_{\text{Subject difference from group level}}
+\\
+\text{ }
+\\
+\text{ }
+\\
+\beta_{Tcold,s} = \underbrace{\gamma_1}_{\text{Group level Slope}}+\underbrace{u_{1,s}}_{\text{Subject difference from group level}}
+$$
+
+:::
+::: {.column}
+
+```{r, fig.width = 10, fig.height = 10, warning = F, message = F, echo = F, results='hide'}
+load("simulation_workspace2.RData")
+
+df %>% ggplot(aes(x = targetTcold, y = vasResponse))+
+  geom_point()+
+  facet_wrap(~SubID)+
+  theme_classic()+
+  geom_line(data = curves, aes(x = x, y = y, col = "no_pooling"), size = 1.2)+
+  geom_line(data = curves2, aes(x = x, y = y, col = "complete_pooling"), size = 1.2)+
+  geom_line(data = curves3, aes(x = x, y = y, col = "(tempcold | id), mixed effects"), size = 1.2)+
+  geom_line(data = curves4, aes(x = x, y = y, col = "(1 | id), random intercept"), size = 1.2)+
+  coord_cartesian(ylim = c(0,1))+theme(text = element_text(size = 20))+scale_color_manual(values = c(colors[3],colors[4],colors[1], colors[2]))
+
+```
+
+:::
+::::::::::::::
+
+## Estimates
+
+### Complete pooling
+```{r,echo = F, warning = F, message = F}
+load("simulation_workspace2.RData")
+
+sjPlot::tab_model(model_comp, transform = NULL, show.se = TRUE, digits = 3)
+```
+### No pooling
+```{r,echo = F, warning = F, message = F,ft.align="left"}
+load("simulation_workspace2.RData")
+
+summarized = dff %>% summarize(meanint = mean(Intercept), seinter =  sd(Intercept)/sqrt(n()),meanslope = mean(targetTcold), seslope =  sd(targetTcold)/sqrt(n()))
+table_sum = flextable::flextable(round(summarized,3))
+table_sum <- flextable::align(table_sum, align = "left", part = "all")
+table_sum
+
+```
+### Random intercept
+```{r,echo = F, warning = F, message = F}
+sjPlot::tab_model(model2, transform = NULL, show.se = TRUE, digits = 3)
+```
+### Mixed effects
+```{r,echo = F, warning = F, message = F}
+load("simulation_workspace2.RData")
+
+sjPlot::tab_model(model1, transform = NULL)
+```
+
+
+## Individual estimates
+
+### no pooling
+```{r}
+dff[,3:4] = round(dff[,3:4],3)
+table1 = flextable::flextable(dff)
+
+table1 <- flextable::align(table1, align = "left", part = "all")
+table1
+```
+

@@ -1,0 +1,67 @@
+---
+title: "app"
+author: "jesper fischer ehmsen"
+date: "2023-07-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(shiny)
+```
+
+## R Markdown
+
+```{r}
+
+library(shiny)
+library(ggplot2)
+library(shinythemes)
+library(shinyWidgets)
+library(here)
+library(tidyverse)
+#input = data.frame(kappa = 1.4, theta = 0.3, omega = -2,Inital_prec2 = 4,Inital_mu2 = 0,Inital_mu3 = 0,Inital_prec3 = 4)
+
+slider_params1 <- list(
+  list("mu", "mu", -100, 100, 0, 1),
+  list("sd", "sd", 0, 100, 1, 1)
+)
+
+
+ui <- fluidPage(
+  tabsetPanel(
+    tabPanel("Page 1",
+      sidebarLayout(
+        sidebarPanel(
+          lapply(slider_params1, function(p) {
+            do.call(sliderInput, p)
+          })
+        ),
+        mainPanel(
+        fluidRow(
+        column(12, plotOutput("plot", height = "750px"))
+      )
+    )))
+  )
+)
+
+
+server <- function(input, output) {
+ normal_data = reactive({
+    data = data.frame(x = rnorm(1000,input$mu,input$sd))
+    
+    return(data)   
+ })
+ 
+ output$plot <- renderPlot({
+
+     normal_data() %>% ggplot(aes(x = x)) +geom_histogram()+theme_classic()+coord_cartesian(xlim = c(input$mu-5*input$sd,input$mu+5*input$sd))+
+       theme(legend.position = "none", text = element_text(size = 20))+scale_y_continuous("Y", scales::pretty_breaks(n = 5))
+   
+ })
+ 
+  
+}
+shinyApp(ui = ui, server = server)
+```
+

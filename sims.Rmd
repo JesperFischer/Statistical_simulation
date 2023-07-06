@@ -7,7 +7,7 @@ date: '2023-05-11'
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 
-pacman::p_load(brms, tidyverse, here, cmdstanr, loo, extraDistr, tidybayes, furrr,bayesplot, patchwork, progressr, R.utils, scales)
+pacman::p_load(brms, tidyverse, here, cmdstanr, loo, extraDistr, tidybayes, furrr,bayesplot, patchwork, progressr, R.utils, scales, gamlss)
 
 ```
 
@@ -99,17 +99,17 @@ parameters$id = 1:nrow(parameters)
 
 data_list <- split(parameters, parameters$id)
 
-plan(multisession, workers = 10)
+plan(multisession, workers = 5)
 
-results = future_map_dfr(data_list,get_model_pred2, .options = furrr_options(seed = TRUE), .progress = TRUE)
+results_lrt = future_map_dfr(data_list,get_model_pred2, .options = furrr_options(seed = TRUE), .progress = TRUE)
 
 
-results %>% ggplot(aes(x = p, y = p_lrt))+
+results_lrt %>% ggplot(aes(x = p, y = p_lrt))+
   geom_point()+
   theme_classic()+
   geom_abline(slope = 1, intercept = 0)
 
-results %>% 
+results_lrt %>% 
   mutate(siginificant_p = ifelse(p<0.05,"signifcant int","Non-signifcant int"), siginificant_lrt = ifelse(p_lrt<0.05,"signifcant int","Non-signifcant int"))%>%
   dplyr::select(aicdif,bicdif,siginificant_p,siginificant_lrt) %>% 
   pivot_longer(cols = c(aicdif,bicdif)) %>% 
@@ -122,7 +122,7 @@ results %>%
 
 
 
-results %>% ggplot(aes(x = p, y = p_lrt))+
+results_lrt %>% ggplot(aes(x = p, y = p_lrt))+
   geom_point()+
   theme_classic()+
   geom_abline(slope = 1, intercept = 0)+
@@ -198,6 +198,7 @@ df$RMSE = sqrt(mean(residuals(model_gamma)^2))
 names(df) = c("beta","se","z","p","model","RMSE")
 df$dif = c(df[1,1]-data$int,df[2,1]-data$beta_coolness,df[3,1]-data$beta_cue,df[4,1]-data$beta_cue_coolness_int)
 
+df$reals = c(data$int,data$beta_coolness, data$beta_cue, data$beta_cue_coolness_int)
 
 
 intval_LOGO = data.frame(summary(model_LOGNO)[1:4,])
@@ -205,6 +206,8 @@ intval_LOGO$id = "LGONO"
 intval_LOGO$RMSE = sqrt(mean(residuals(model_LOGNO)^2))
 names(intval_LOGO) = c("beta","se","z","p","model","RMSE")
 intval_LOGO$dif = c(intval_LOGO[1,1]-data$int,intval_LOGO[2,1]-data$beta_coolness,intval_LOGO[3,1]-data$beta_cue,intval_LOGO[4,1]-data$beta_cue_coolness_int)
+
+intval_LOGO$reals = c(data$int,data$beta_coolness, data$beta_cue, data$beta_cue_coolness_int)
 
 
 intval_NO = summary(model_NO)
@@ -214,6 +217,8 @@ df1$id = "Log(normal)"
 df1$RMSE = sqrt(mean(residuals(model_NO)^2))
 names(df1) = c("beta","se","z","p","model","RMSE")
 df1$dif = c(df1[1,1]-data$int,df1[2,1]-data$beta_coolness,df1[3,1]-data$beta_cue,df1[4,1]-data$beta_cue_coolness_int)
+
+df1$reals = c(data$int,data$beta_coolness, data$beta_cue, data$beta_cue_coolness_int)
 
 
 realdf = rbind(df,df1,intval_LOGO)
@@ -235,26 +240,557 @@ parameters$id = 1:nrow(parameters)
 data_list <- split(parameters, parameters$id)
 
 
-results = future_map_dfr(data_list,lognormalvsnormal, .options = furrr_options(seed = TRUE), .progress = TRUE)
+plan(multisession, workers = 5)
 
 
-results %>% ggplot(aes(x = model, y = RMSE))+
+results_pos = future_map_dfr(data_list,lognormalvsnormal, .options = furrr_options(seed = TRUE), .progress = TRUE)
+
+
+results_pos %>% ggplot(aes(x = model, y = RMSE))+
   geom_boxplot()+theme_classic()#+coord_cartesian(ylim = c(0.9,2))
 
-results %>% ggplot(aes(x = model, y = dif))+
+results_pos %>% ggplot(aes(x = model, y = dif))+
   geom_boxplot()+theme_classic()
 
 
+results_pos %>% mutate(coefs = gsub("[0-9.]", "",rownames(.))) %>% ggplot(aes(x = beta-reals, y = coefs))+geom_boxplot()+facet_grid(~model)
 
-results %>% ggplot(aes(x = p, y = p_lrt))+
-  geom_point()+
-  theme_classic()+
-  geom_abline(slope = 1, intercept = 0)+
-  coord_cartesian(xlim = c(0,0.1),ylim = c(0,0.2))+
-  geom_hline(aes(yintercept = 0.05), linetype = "dashed")+
-  geom_vline(aes(xintercept = 0.05), linetype = "dashed")
-  
 
 ```
 
+
+
+```{r}
+
+
+betavslogit = function(data){
+
+trials = data$trials
+int = data$int
+beta_coolness = data$beta_coolness
+beta_cue = data$beta_cue
+beta_cue_coolness_int = data$beta_cue_coolness_int
+
+
+coolness <- rbeta(trials, 1, 1)
+
+#1 is high-tone
+cue <- rbinom(trials,1,0.5)
+
+
+
+error =  rnorm(trials, mean = 0, sd = 1)
+
+
+
+y <-  inv_logit_scaled(int+
+  beta_coolness * coolness +
+  beta_cue * cue +  beta_cue_coolness_int * cue * coolness + 
+error)
+
+
+cue = as.factor(cue)
+
+
+
+dataa <<- data.frame(y = y, coolness = coolness, cue = cue)
+
+model_beta <- glmmTMB::glmmTMB(y ~ coolness*cue,
+           family = glmmTMB::beta_family(link = "logit"),
+           data = dataa)
+
+
+model_NO <- lm(logit_scaled(y) ~ coolness*cue,
+           data = dataa)
+
+intval_beta = summary(model_beta)
+intval_beta = intval_beta$coefficients$cond
+df = data.frame((intval_beta))
+df$id = "beta"
+df$RMSE = sqrt(mean(residuals(model_beta)^2))
+names(df) = c("beta","se","z","p","model","RMSE")
+df$dif = c(df[1,1]-data$int,df[2,1]-data$beta_coolness,df[3,1]-data$beta_cue,df[4,1]-data$beta_cue_coolness_int)
+
+df$reals = c(data$int,data$beta_coolness, data$beta_cue, data$beta_cue_coolness_int)
+
+
+intval_NO = summary(model_NO)
+intval_NO = intval_NO$coefficients
+df1 = data.frame((intval_NO))
+df1$id = "Log(normal)"
+df1$RMSE = sqrt(mean(residuals(model_NO)^2))
+names(df1) = c("beta","se","z","p","model","RMSE")
+df1$dif = c(df1[1,1]-data$int,df1[2,1]-data$beta_coolness,df1[3,1]-data$beta_cue,df1[4,1]-data$beta_cue_coolness_int)
+
+df1$reals = c(data$int,data$beta_coolness, data$beta_cue, data$beta_cue_coolness_int)
+
+realdf = rbind(df,df1)
+
+return(realdf)
+}
+
+
+
+parameters = expand.grid(trials = 1000,
+            int = 0.5,
+            beta_coolness = seq(-1,1,0.2),
+            beta_cue = seq(-1,1,0.2),
+            beta_cue_coolness_int = seq(-3,3,by = 0.2))
+
+
+parameters$id = 1:nrow(parameters)
+
+data_list <- split(parameters, parameters$id)
+
+results_beta = future_map_dfr(data_list,betavslogit, .options = furrr_options(seed = TRUE), .progress = TRUE)
+
+
+
+results_beta %>% ggplot(aes(x = model, y = RMSE))+
+  geom_boxplot()+theme_classic()#+coord_cartesian(ylim = c(0.9,2))
+
+results_beta %>% ggplot(aes(x = model, y = dif))+
+  geom_boxplot()+theme_classic()
+
+results_beta %>% mutate(coefs = gsub("[0-9.]", "",rownames(.))) %>% ggplot(aes(x = beta-reals, y = coefs))+geom_boxplot()+facet_grid(~model)
+
+```
+
+
+
+```{r}
+
+betavslogit2 = function(data){
+
+trials = data$trials
+int = data$int
+beta_coolness = data$beta_coolness
+beta_cue = data$beta_cue
+beta_cue_coolness_int = data$beta_cue_coolness_int
+
+
+coolness <- rbeta(trials, 1, 1)
+
+#1 is high-tone
+cue <- rbinom(trials,1,0.5)
+
+
+
+error =  (truncnorm::rtruncnorm(trials, a = 0, mean = 7, sd = 0.5)^2)
+
+y <- extraDistr::rprop(trials, error,inv_logit_scaled(int+
+  beta_coolness * coolness +
+  beta_cue * cue +  beta_cue_coolness_int * cue * coolness))
+
+
+
+cue = as.factor(cue)
+
+
+
+dataa <<- data.frame(y = y, coolness = coolness, cue = cue)
+
+model_beta <- glmmTMB::glmmTMB(y ~ coolness*cue,
+           family = glmmTMB::beta_family(link = "logit"),
+           data = dataa)
+
+
+model_NO <- lm(logit_scaled(y) ~ coolness*cue,
+           data = dataa)
+
+
+
+
+
+intval_beta = summary(model_beta)
+intval_beta = intval_beta$coefficients$cond
+df = data.frame((intval_beta))
+df$id = "beta"
+df$RMSE = sqrt(mean(residuals(model_beta)^2))
+names(df) = c("beta","se","z","p","model","RMSE")
+df$dif = c(df[1,1]-data$int,df[2,1]-data$beta_coolness,df[3,1]-data$beta_cue,df[4,1]-data$beta_cue_coolness_int)
+
+df$reals = c(data$int,data$beta_coolness, data$beta_cue, data$beta_cue_coolness_int)
+
+
+intval_NO = summary(model_NO)
+intval_NO = intval_NO$coefficients
+df1 = data.frame((intval_NO))
+df1$id = "Log(normal)"
+df1$RMSE = sqrt(mean(residuals(model_NO)^2))
+names(df1) = c("beta","se","z","p","model","RMSE")
+df1$dif = c(df1[1,1]-data$int,df1[2,1]-data$beta_coolness,df1[3,1]-data$beta_cue,df1[4,1]-data$beta_cue_coolness_int)
+
+df1$reals = c(data$int,data$beta_coolness, data$beta_cue, data$beta_cue_coolness_int)
+
+realdf = rbind(df,df1)
+
+return(realdf)
+}
+
+
+
+parameters = expand.grid(trials = 1000,
+            int = 0.5,
+            beta_coolness = seq(-1,1,0.2),
+            beta_cue = seq(-1,1,0.2),
+            beta_cue_coolness_int = seq(-3,3,by = 0.2))
+
+
+parameters$id = 1:nrow(parameters)
+
+data_list <- split(parameters, parameters$id)
+
+results_beta2 = future_map_dfr(data_list,betavslogit2, .options = furrr_options(seed = TRUE), .progress = TRUE)
+
+
+
+results_beta2 %>% ggplot(aes(x = model, y = RMSE))+
+  geom_boxplot()+theme_classic()#+coord_cartesian(ylim = c(0.9,2))
+
+results_beta2 %>% ggplot(aes(x = model, y = dif))+
+  geom_boxplot()+theme_classic()
+
+results_beta2 %>% mutate(coefs = gsub("[0-9.]", "",rownames(.))) %>% ggplot(aes(x = beta-reals, y = coefs))+geom_boxplot()+facet_grid(~model)
+
+
+
+# Combine the variable names into a single vector
+vars_to_save <- ls()
+
+# Save the variables to a file
+save(list = vars_to_save, file = here::here("simulation_workspace.RData"))
+```
+
+
+
+```{r, hierachical models}
+myfun <- function(x, intercept, beta) {
+  y = inv_logit_scaled(intercept+beta*x)
+  return(y)
+}
+
+data = read.csv(here::here("~","tgi-calibration-exp1","code","Modeling","allData.csv"))
+df = data %>% filter(vasResponse != 0 & vasResponse != 100) %>% mutate(vasResponse = vasResponse/100) %>% filter(vasType == "Cold")
+
+x = seq(min(df$targetTcold)-2, max(df$targetTcold)+2, length.out = 100)
+dff = data.frame()
+for(sub in unique(df$SubID)){
+  df_no_pool = glmmTMB::glmmTMB(vasResponse ~ targetTcold , data = df %>% filter(SubID == sub), family = glmmTMB::beta_family()) %>% 
+    summary() %>% 
+    coef() %>% 
+    .$cond %>% 
+    data.frame() %>% 
+    mutate(SubID = sub, Std..Error = NULL, z.value = NULL, Pr...z.. = NULL) %>% 
+    add_column(Model = "No pooling") %>% rownames_to_column("Coef")
+  
+  dff = rbind(dff,df_no_pool)
+}
+
+dff = dff%>% pivot_wider(names_from  = "Coef", values_from = c(Estimate)) %>% rename(Intercept =`(Intercept)`)
+
+curves = data.frame()
+for(s in unique(dff$SubID)){
+  dd = dff %>% filter(SubID == s)
+  curves = rbind(curves, data.frame(x = x, y = myfun(x, dd$Intercept, dd$targetTcold), SubID = s))
+  
+}
+
+
+df %>% ggplot(aes(x = targetTcold , y = vasResponse))+geom_point()+facet_wrap(~SubID)+theme_classic()+geom_line(data = curves, aes(x = x, y = y))+coord_cartesian(ylim = c(0,1))
+
+model_comp = glmmTMB::glmmTMB(vasResponse ~ targetTcold, data = df, family = glmmTMB::beta_family())
+
+df_complete = glmmTMB::glmmTMB(vasResponse ~ targetTcold, data = df, family = glmmTMB::beta_family()) %>% 
+    summary() %>% 
+    coef() %>% 
+    .$cond %>% 
+    data.frame() %>% 
+    mutate(Std..Error = NULL, z.value = NULL, Pr...z.. = NULL) %>% 
+    add_column(Model = "Complete pooling") %>% rownames_to_column("Coef")
+
+df_complete = do.call("rbind", replicate(length(unique(df$SubID)), df_complete, simplify = FALSE)) %>% mutate(SubID = rep(unique(df$SubID), 1, each = 2))
+
+df_complete = df_complete %>% pivot_wider(names_from  = "Coef", values_from = c(Estimate)) %>% rename(Intercept =`(Intercept)`)
+
+
+curves2 = data.frame()
+for(s in unique(df$SubID)){
+  dd = df_complete %>% filter(SubID == s)
+  curves2 = rbind(curves2, data.frame(x = x, y = myfun(x, dd$Intercept, dd$targetTcold ), SubID = s))
+  
+}
+
+df %>% ggplot(aes(x = targetTcold, y = vasResponse))+
+  geom_point()+
+  facet_wrap(~SubID)+
+  theme_classic()+
+  geom_line(data = curves2, aes(x = x, y = y))+
+  coord_cartesian(ylim = c(0,1))
+
+
+model1 = glmmTMB::glmmTMB(vasResponse ~ targetTcold+(targetTcold|SubID), data = df, family = glmmTMB::beta_family())
+
+df_partial_pooling <- coef(model1)$cond$SubID %>% 
+  rownames_to_column("SubID") %>% 
+  as_tibble() %>% 
+  rename(Intercept = `(Intercept)`) %>% 
+  add_column(Model = "Partial pooling")
+
+curves3 = data.frame()
+for(s in unique(dff$SubID)){
+  dd = df_partial_pooling %>% filter(SubID == s)
+  curves3 = rbind(curves3, data.frame(x = x, y = myfun(x, dd$Intercept, dd$targetTcold ), SubID = s))
+  
+}
+
+df %>% ggplot(aes(x = targetTcold, y = vasResponse))+
+  geom_point()+
+  facet_wrap(~SubID)+
+  theme_classic()+
+  geom_line(data = curves3, aes(x = x, y = y))+
+  coord_cartesian(ylim = c(0,1))
+
+
+
+model2 = glmmTMB::glmmTMB(vasResponse ~ targetTcold+(1|SubID), data = df, family = glmmTMB::beta_family())
+
+df_partial_pooling2 <- coef(model2)$cond$SubID %>% 
+  rownames_to_column("SubID") %>% 
+  as_tibble() %>% 
+  rename(Intercept = `(Intercept)`) %>% 
+  add_column(Model = "Partial pooling2")
+
+curves4 = data.frame()
+for(s in unique(dff$SubID)){
+  dd = df_partial_pooling2 %>% filter(SubID == s)
+  curves4 = rbind(curves4, data.frame(x = x, y = myfun(x, dd$Intercept, dd$targetTcold ), SubID = s))
+  
+}
+
+df %>% ggplot(aes(x = targetTcold, y = vasResponse))+
+  geom_point()+
+  facet_wrap(~SubID)+
+  theme_classic()+
+  geom_line(data = curves3, aes(x = x, y = y))+
+  coord_cartesian(ylim = c(0,1))
+
+
+
+
+df %>% ggplot(aes(x = targetTcold, y = vasResponse))+
+  geom_point()+
+  facet_wrap(~SubID)+
+  theme_classic()+
+  geom_line(data = curves, aes(x = x, y = y, col = "no_pooling"), size = 1.2)+
+  geom_line(data = curves2, aes(x = x, y = y, col = "complete_pooling"), size = 1.2)+
+  geom_line(data = curves3, aes(x = x, y = y, col = "(tempcold | id), mixed effects"), size = 1.2)+
+  geom_line(data = curves4, aes(x = x, y = y, col = "(1 | id), random intercept"), size = 1.2)+
+  coord_cartesian(ylim = c(0,1))
+
+
+sjPlot::tab_model(model_comp, transform = NULL)
+sjPlot::tab_model(model2, transform = NULL)
+sjPlot::tab_model(model1, transform = NULL)
+dff %>%  summarize(mean = mean(targetTcold), se = sd(targetTcold)/sqrt(n()),meaninter = mean(Intercept), seinter = sd(Intercept)/sqrt(n()))
+
+
+# Combine the variable names into a single vector
+vars_to_save <- ls()
+
+# Save the variables to a file
+save(list = vars_to_save, file = here::here("simulation_workspace2.RData"))
+
+```
+
+
+```{r, hierachical models}
+model2 = glmmTMB::glmmTMB(vasResponse ~ StimDuration*StimType+(StimDuration|SubID), data = df, family = glmmTMB::beta_family())
+
+df_partial_pooling <- coef(model2)$cond$SubID %>% 
+  rownames_to_column("SubID") %>% 
+  as_tibble() %>% 
+  rename(Intercept = `(Intercept)`) %>% 
+  add_column(Model = "Partial pooling")
+
+curves3 = data.frame()
+for(s in unique(dff$SubID)){
+  dd = df_partial_pooling %>% filter(SubID == s)
+  #cold
+  ycold = myfun(x, dd$Intercept, dd$StimDuration)
+  #TGI
+  ytgi = myfun(x, dd$Intercept, dd$StimDuration+dd$`StimDuration:StimTypeTGI`)
+  #warm
+  ywarm = myfun(x, dd$Intercept, dd$StimDuration+dd$`StimDuration:StimTypeWarm`)
+  
+  curves3 = rbind(curves3, data.frame(x = rep(x,3), y = c(ycold,ytgi,ywarm),StimType = rep(c("Cold","Warm","TGI"), each = 100), SubID = s))
+  
+}
+
+
+plot5 = df %>% ggplot(aes(x = StimDuration, y = vasResponse))+
+  geom_point(aes(col = StimType))+
+  facet_wrap(~SubID)+
+  theme_classic()+
+  geom_line(data = curves3, aes(x = x, y = y, col = StimType))+
+  coord_cartesian(xlim = c(0,15), ylim = c(0,1))+ggtitle("Varying slopes")
+
+
+
+
+
+
+
+model3 = glmmTMB::glmmTMB(vasResponse ~ StimDuration*StimType+(StimDuration:StimType|SubID), data = df, family = glmmTMB::beta_family())
+
+df_partial_pooling <- coef(model3)$cond$SubID %>% 
+  rownames_to_column("SubID") %>% 
+  as_tibble() %>% 
+  rename(Intercept = `(Intercept)`) %>% 
+  add_column(Model = "Partial pooling")
+
+curves4 = data.frame()
+for(s in unique(dff$SubID)){
+  dd = df_partial_pooling %>% filter(SubID == s)
+  #cold
+  ycold = myfun(x, dd$Intercept, dd$StimDuration+dd$`StimDuration:StimTypeCold`)
+  #TGI
+  ytgi = myfun(x, dd$Intercept, dd$StimDuration+dd$`StimDuration:StimTypeTGI`)
+  #warm
+  ywarm = myfun(x, dd$Intercept, dd$StimDuration+dd$`StimDuration:StimTypeWarm`)
+  
+  curves4 = rbind(curves4, data.frame(x = rep(x,3), y = c(ycold,ytgi,ywarm),StimType = rep(c("Cold","Warm","TGI"), each = 100), SubID = s))
+  
+}
+
+
+plot6 = df %>% ggplot(aes(x = StimDuration, y = vasResponse))+
+  geom_point(aes(col = StimType))+
+  facet_wrap(~SubID)+
+  theme_classic()+
+  geom_line(data = curves4, aes(x = x, y = y, col = StimType))+
+  coord_cartesian(xlim = c(0,15), ylim = c(0,1))+ggtitle("Varying interation slopes")
+
+
+plot5+plot6+ plot_layout(guides = "collect")
+
+
+
+
+
+
+
+
+df$thresholdProb = as.factor(df$thresholdProb)
+
+model4 = (glmmTMB::glmmTMB(vasResponse ~ StimDuration+(1|SubID)+(1|thresholdProb), data = df, family = glmmTMB::beta_family()))
+coef(model4)$cond$SubID
+
+model5 = (glmmTMB::glmmTMB(vasResponse ~ StimDuration+thresholdProb+(1|SubID), data = df, family = glmmTMB::beta_family()))
+coef(model5)$cond$SubID
+
+
+model6 = (glmmTMB::glmmTMB(vasResponse ~ StimDuration+thresholdProb+(1|SubID/thresholdProb), data = df, family = glmmTMB::beta_family()))
+coef(model6)$cond$SubID
+
+model7 = (glmmTMB::glmmTMB(vasResponse ~ StimDuration+thresholdProb+(1|SubID:thresholdProb), data = df, family = glmmTMB::beta_family()))
+coef(model7)$cond$SubID
+
+
+df_partial_pooling <- coef(model4)$cond$SubID %>% 
+  rownames_to_column("SubID") %>% 
+  as_tibble() %>% 
+  rename(Intercept = `(Intercept)`) %>% 
+  add_column(Model = "Partial pooling")
+
+curves4 = data.frame()
+for(s in unique(dff$SubID)){
+  dd = df_partial_pooling %>% filter(SubID == s)
+  #cold
+  ycold = myfun(x, dd$Intercept, dd$StimDuration+dd$`StimDuration:StimTypeCold`)
+  #TGI
+  ytgi = myfun(x, dd$Intercept, dd$StimDuration+dd$`StimDuration:StimTypeTGI`)
+  #warm
+  ywarm = myfun(x, dd$Intercept, dd$StimDuration+dd$`StimDuration:StimTypeWarm`)
+  
+  curves4 = rbind(curves4, data.frame(x = rep(x,3), y = c(ycold,ytgi,ywarm),StimType = rep(c("Cold","Warm","TGI"), each = 100), SubID = s))
+  
+}
+
+
+df %>% ggplot(aes(x = StimDuration, y = vasResponse))+
+  geom_point(aes(col = thresholdProb, shape = StimType))+
+  facet_wrap(~SubID)+
+  theme_classic()+
+  #geom_line(data = curves4, aes(x = x, y = y, col = StimType))+
+  coord_cartesian(xlim = c(0,15), ylim = c(0,1))+ggtitle("Varying interation slopes")
+
+
+
+
+
+
+
+
+```
+
+
+
+
+```{r}
+#heteroskedacity
+trials = 500
+
+x = runif(trials,0,20)
+
+slope = 2
+
+intercept = 5
+
+error = rnorm(trials,2,2)
+error1 = rnorm(trials,2,2*x)
+
+y = intercept+x*slope+error
+y1 = intercept+x*slope+error1
+
+dataa = data.frame(x =x, y = y, y1 = y1)
+
+
+m = lm(y1~x, data = dataa)
+
+
+prediction = data.frame(predict(m, data = dataa, interval = "predict"))
+
+plot(ggeffects::ggpredict(m))$x+
+  geom_point(data = dataa,aes(x,y1))+
+  geom_line(data = data.frame(), aes(x = dataa$x, y = prediction$lwr))+
+  geom_line(data = data.frame(),aes(x = dataa$x, y = prediction$upr))
+
+
+mm = gamlss(y1~1+x,
+       sigma.formula = ~1+x,
+       data = dataa)
+
+
+predictionmu = data.frame(mu = predict(mm, data = dataa, interval = "confidence", what = "mu"))
+
+predictionsigma = data.frame(sigma = predict(mm, data = dataa, interval = "predict", what = "sigma")*sqrt(trials)*1.96)
+
+plot(ggeffects::ggpredict(mm, data = dataa))$x+geom_point(data = dataa,aes(x,y1))+
+  geom_line(data = dataa, aes(x = x, y = predictionmu$mu))+
+  geom_line(data = dataa, aes(x = x, y = predictionmu$mu+predictionsigma$sigma))+
+  geom_line(data = dataa, aes(x = x, y = predictionmu$mu-predictionsigma$sigma))
+
+
+
+plot(ggeffects::ggpredict(m))
+plot(ggeffects::ggpredict(mm))
+
+
+plot(mm)
+
+par(mfrow = c(2, 2))
+plot(m)
+
+```
 
